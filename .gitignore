@@ -1,0 +1,15 @@
+# Xcode / Swift
+DerivedData/
+build/
+*.xcuserdatad/
+*.xcscmblueprint
+*.xcworkspace
+*.xcuserstate
+# SwiftPM
+/.build/
+/Packages/
+/Package.resolved
+# CocoaPods (if added later)
+Pods/
+# Misc
+*.DS_Store
