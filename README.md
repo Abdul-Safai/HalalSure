@@ -22,3 +22,6 @@ Trusted halal verification app.
 - [ ] RemoteProductRepository (connect to backend API)
 - [ ] XD-matching colors/typography
 - [ ] App Icon & Launch Screen
+
+## Changelog
+- v0.1.1: App icon added
