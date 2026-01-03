@@ -2,7 +2,7 @@ import SwiftUI
 import UIKit
 
 // ======================================================
-// HomeView — Accent-Rail header (new style, compact)
+// HomeView — Header rail + Popular Ticker (no-gap loop)
 // Image-hugging tiles + floating Scan FAB (large sheet)
 // ======================================================
 struct HomeView: View {
@@ -18,12 +18,20 @@ struct HomeView: View {
                 ScrollView(showsIndicators: false) {
                     VStack(spacing: 14) {
 
-                        // NEW header style
+                        // Header
                         HeroHeaderRail()
 
                         // Search
                         SearchPill(query: $query)
                             .padding(.horizontal, 16)
+
+                        // ===== Popular (auto-scrolling, seamless) =====
+                        // Slower speed + tighter spacing as requested
+                        PopularTicker(
+                            items: PopularItem.demo,
+                            speed: 27,     // try 6–10 for slow
+                            spacing: 10
+                        )
 
                         // Categories
                         VStack(spacing: 8) {
@@ -65,12 +73,11 @@ struct HomeView: View {
                     .padding(.top, 6)
                 }
 
-                // Floating Scan FAB (kept)
+                // Floating Scan FAB
                 ScanFAB { showingScanner = true }
                     .padding(.trailing, 18)
                     .padding(.bottom, 34)
             }
-            // Hide nav title to avoid duplication with header
             .navigationTitle("")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .principal) { EmptyView() } }
@@ -124,12 +131,11 @@ private struct BackgroundSurface: View {
 }
 
 // ===============================
-// NEW: Accent-Rail header card
+// Accent-Rail header card (compact)
 // ===============================
 private struct HeroHeaderRail: View {
     var body: some View {
         ZStack {
-            // Base card
             RoundedRectangle(cornerRadius: 18, style: .continuous)
                 .fill(.ultraThinMaterial)
                 .overlay(
@@ -146,7 +152,6 @@ private struct HeroHeaderRail: View {
                 .shadow(color: .black.opacity(0.08), radius: 10, x: 0, y: 6)
 
             HStack(spacing: 12) {
-                // Accent rail
                 RoundedRectangle(cornerRadius: 10)
                     .fill(
                         LinearGradient(
@@ -157,7 +162,6 @@ private struct HeroHeaderRail: View {
                     .frame(width: 6, height: 64)
                     .padding(.leading, 10)
 
-                // Badge
                 ZStack {
                     Circle()
                         .fill(
@@ -173,7 +177,6 @@ private struct HeroHeaderRail: View {
                 }
                 .frame(width: 38, height: 38)
 
-                // Text stack
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Trust. Tech. Transparency.")
                         .font(.caption.weight(.semibold))
@@ -302,7 +305,6 @@ private struct CategoryTileCard: View {
             VStack(spacing: 8) {
                 if let raw = UIImage(named: cat.imageName) {
                     let ui = raw.trimmedTransparentPixels(padding: 8)
-
                     Image(uiImage: ui)
                         .resizable()
                         .scaledToFit()
@@ -424,6 +426,141 @@ private struct RecentRowCard: View {
 }
 
 // ===============================
+// ===== Popular marquee pieces =====
+// ===============================
+struct PopularItem: Identifiable, Equatable {
+    let id = UUID()
+    let title: String
+    let imageName: String
+}
+
+extension PopularItem {
+    // Use your asset names exactly as in the Assets catalog
+    static let demo: [PopularItem] = [
+        .init(title: "Drink",       imageName: "drink"),
+        .init(title: "Juice",       imageName: "juice"),
+        .init(title: "Pizza",       imageName: "pizza"),
+        .init(title: "Croissants",  imageName: "crosissant"), // match your asset key
+        .init(title: "Chips",       imageName: "chips"),
+        .init(title: "Cheese",      imageName: "cheese"),
+        .init(title: "Cookies",     imageName: "cookies")
+    ]
+}
+
+// ====== CHIP: image + label only (no background tile) ======
+private struct PopularChip: View {
+    let item: PopularItem
+    private let chipWidth: CGFloat = 80
+
+    var body: some View {
+        VStack(spacing: 4) {
+            // Safe load with fallback to placeholder
+            if let ui = UIImage(named: item.imageName) {
+                Image(uiImage: ui)
+                    .resizable()
+                    .interpolation(.high)
+                    .antialiased(true)
+                    .scaledToFit()
+                    .frame(height: 70)
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .shadow(color: .black.opacity(0.10), radius: 6, x: 0, y: 3)
+            } else {
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(Brand.green.opacity(0.12))
+                    .overlay(Image(systemName: "photo").font(.title3).foregroundStyle(Brand.green))
+                    .frame(height: 70)
+            }
+
+            Text(item.title)
+                .font(.subheadline.weight(.semibold))
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+                .frame(width: chipWidth)
+        }
+        .frame(width: chipWidth)
+    }
+}
+
+// Measure width of one sequence (for seamless loop)
+private struct WidthKey: PreferenceKey {
+    static var defaultValue: CGFloat = 1
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
+}
+private struct WidthReader: View {
+    var body: some View {
+        GeometryReader { geo in
+            Color.clear.preference(key: WidthKey.self, value: geo.size.width)
+        }
+    }
+}
+
+// ===== Seamless Popular Ticker (no gap) =====
+private struct PopularTicker: View {
+    let items: [PopularItem]
+    var speed: CGFloat = 8     // default slow
+    var spacing: CGFloat = 8
+
+    @State private var contentWidth: CGFloat = 1
+    @State private var start = Date()
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            // Title with green bar
+            HStack(spacing: 10) {
+                RoundedRectangle(cornerRadius: 2)
+                    .fill(Brand.green)
+                    .frame(width: 4, height: 18)
+                Text("Popular Categories")
+                    .font(.title3.weight(.semibold))
+                Spacer()
+            }
+            .padding(.horizontal, 16)
+
+            GeometryReader { geo in
+                TimelineView(.animation) { context in
+                    let elapsed = context.date.timeIntervalSince(start)
+
+                    // Width of one full sequence (chips + internal spacing).
+                    // Add one spacing so gap between last→first equals chip spacing.
+                    let loop = max(contentWidth + spacing, 1)
+
+                    // Continuous left movement; wrap using modulo
+                    let dx = -CGFloat(elapsed) * speed
+                    let offset = dx.truncatingRemainder(dividingBy: loop)
+
+                    ZStack(alignment: .leading) {
+                        // Three copies so coverage is continuous
+                        let positions: [CGFloat] = [offset, offset + loop, offset + loop * 2]
+
+                        ForEach(positions, id: \.self) { pos in
+                            HStack(spacing: spacing) {
+                                ForEach(items) { PopularChip(item: $0) }
+                            }
+                            .offset(x: pos)
+                        }
+                    }
+                    // Measure one sequence width (nearly invisible overlay)
+                    .overlay(
+                        HStack(spacing: spacing) {
+                            ForEach(items) { PopularChip(item: $0) }
+                        }
+                        .background(WidthReader())
+                        .opacity(0.001)
+                    )
+                    .onPreferenceChange(WidthKey.self) { w in
+                        if w > 0 { contentWidth = w }
+                    }
+                    .frame(width: geo.size.width, alignment: .leading)
+                    .clipped()
+                }
+            }
+            .frame(height: 110) // slimmer row
+            .padding(.horizontal, 16)
+        }
+    }
+}
+
+// ===============================
 // UIImage helper — trims transparent edges
 // ===============================
 extension UIImage {
@@ -454,7 +591,7 @@ extension UIImage {
                 }
             }
         }
-        if maxX < minX || maxY < minY { return self } // fully transparent
+        if maxX < minX || maxY < minY { return self }
 
         let pad = Int(padding * self.scale)
         let cropX = max(minX - pad, 0)
