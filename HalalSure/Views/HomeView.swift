@@ -1,17 +1,28 @@
 import SwiftUI
 import UIKit
 
+// MARK: - Navigation Route
+private enum Route: Hashable {
+    case category(String)
+}
+
 // ======================================================
-// HomeView — Header rail + Popular Ticker (no-gap loop)
-// Image-hugging tiles + floating Scan FAB (large sheet)
+// HomeView — header rail + seamless Popular marquee
+// Grid categories with navigation + scan FAB
+// Pulls "Popular" labels via local proxy (optional)
 // ======================================================
 struct HomeView: View {
+    @State private var path: [Route] = []
+
     @State private var query: String = ""
     @State private var recent: [VerifiedItem] = SampleData.recent
     @State private var showingScanner = false
 
+    // web-fed popular items (fallback to assets if empty)
+    @State private var popularFromWeb: [PopularItem] = []
+
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $path) {
             ZStack(alignment: .bottomTrailing) {
                 BackgroundSurface()
 
@@ -25,13 +36,17 @@ struct HomeView: View {
                         SearchPill(query: $query)
                             .padding(.horizontal, 16)
 
-                        // ===== Popular (auto-scrolling, seamless) =====
-                        // Slower speed + tighter spacing as requested
-                        PopularTicker(
-                            items: PopularItem.demo,
-                            speed: 27,     // try 6–10 for slow
+                        // ===== Popular (auto-scrolling, seamless, tappable) =====
+                        let chosen = uniqueByTitle(popularFromWeb.isEmpty ? PopularItem.demo : popularFromWeb)
+                        PopularTickerLoop(
+                            items: chosen,
+                            speed: 8,      // points per second
                             spacing: 10
-                        )
+                        ) { item in
+                            let catTitle = destinationCategory(for: item.title)
+                            path.append(.category(catTitle))
+                        }
+                        .padding(.top, 2)
 
                         // Categories
                         VStack(spacing: 8) {
@@ -39,7 +54,7 @@ struct HomeView: View {
                                 .padding(.horizontal, 16)
 
                             CategoryGridTwoColumn(categories: VisualCategory.foodTiles) { selected in
-                                print("Selected:", selected.tag)
+                                path.append(.category(selected.title))
                             }
                             .padding(.horizontal, 16)
                         }
@@ -81,6 +96,12 @@ struct HomeView: View {
             .navigationTitle("")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .principal) { EmptyView() } }
+            .navigationDestination(for: Route.self) { route in
+                switch route {
+                case .category(let title):
+                    CategoryProductsView(categoryTitle: title)
+                }
+            }
         }
         .tint(Brand.green)
         .sheet(isPresented: $showingScanner) {
@@ -88,7 +109,111 @@ struct HomeView: View {
                 .presentationDetents([.large])
                 .presentationDragIndicator(.visible)
         }
+        .task { await loadPopularFromWeb() }
     }
+
+    // MARK: - Remote Popular (via local PHP proxy)
+    @MainActor
+    private func loadPopularFromWeb() async {
+        guard let url = URL(string:
+            "http://localhost/halalsure-api/proxy.php?url=https://hmacanada.org/halal-check/"
+        ) else { return }
+
+        do {
+            let (data, _) = try await URLSession.shared.data(from: url)
+            let resp = try JSONDecoder().decode(HalalProxyResponse.self, from: data)
+            let labels = extractPopularLabels(from: resp.html)
+
+            var mapped: [PopularItem] = labels.compactMap { label in
+                let key = label.lowercased()
+                if let m = siteToAssetMap[key] {
+                    return PopularItem(title: m.title, imageName: m.imageName)
+                }
+                return nil
+            }
+
+            mapped = uniqueByTitle(mapped)
+
+            if !mapped.isEmpty {
+                popularFromWeb = mapped
+            }
+        } catch {
+            print("Popular fetch/parsing failed:", error.localizedDescription)
+        }
+    }
+
+    private func extractPopularLabels(from html: String) -> [String] {
+        guard let range = html.range(of: "Popular Categories", options: .caseInsensitive) else {
+            return []
+        }
+        let tail = html[range.upperBound...]
+        let window = String(tail.prefix(600))
+
+        let candidates = [
+            "Cheese","Pizza","Croissant","Croissants","Yogurt","Chocolate",
+            "Beans","Lentils","Lentis","Juice","Spice","Spices","Soft Drinks",
+            "Chips","Cookies","Beverages","Drinks"
+        ]
+
+        var found: [String] = []
+        for w in candidates {
+            if window.range(of: w, options: .caseInsensitive) != nil {
+                if w.lowercased() == "croissant" &&
+                    !found.contains(where: { $0.caseInsensitiveCompare("Croissants") == .orderedSame }) {
+                    found.append("Croissants")
+                } else if !found.contains(where: { $0.caseInsensitiveCompare(w) == .orderedSame }) {
+                    found.append(w)
+                }
+            }
+        }
+
+        let preferred = ["Cheese","Pizza","Croissants","Yogurt","Chocolate","Beans","Lentils","Juice","Spices","Soft Drinks","Chips","Cookies","Drinks","Beverages"]
+        let ordered = preferred.filter { p in found.contains(where: { $0.caseInsensitiveCompare(p) == .orderedSame }) }
+        return ordered.isEmpty ? found : ordered
+    }
+
+    // NOTE: Cheese label shows as "Cake" (asset stays "cheese")
+    private var siteToAssetMap: [String:(title: String, imageName: String)] {
+        [
+            "cheese":        ("Cake","cheese"),
+            "pizza":         ("Pizza","pizza"),
+            "croissant":     ("Croissants","crosissant"),
+            "croissants":    ("Croissants","crosissant"),
+            "juice":         ("Juice","juice"),
+            "soft drinks":   ("Drinks","drink"),
+            "drinks":        ("Drinks","drink"),
+            "chips":         ("Chips","chips"),
+            "cookies":       ("Cookies","cookies")
+        ]
+    }
+
+    private func uniqueByTitle(_ items: [PopularItem]) -> [PopularItem] {
+        var seen = Set<String>()
+        var out: [PopularItem] = []
+        for it in items {
+            let key = it.title.lowercased()
+            if !seen.contains(key) {
+                seen.insert(key)
+                out.append(it)
+            }
+        }
+        return out
+    }
+
+    private func destinationCategory(for popularTitle: String) -> String {
+        let t = popularTitle.lowercased()
+        if ["drink","drinks","juice"].contains(t) { return "Beverages" }
+        if ["chips","cookies","pizza","croissants"].contains(t) { return "Snack Products" }
+        if ["cake"].contains(t) { return "Baked Goods" }
+        return "All Products"
+    }
+}
+
+// ===== Proxy JSON model =====
+private struct HalalProxyResponse: Decodable {
+    let status: Int
+    let url: String
+    let html: String
 }
 
 // ===============================
@@ -269,7 +394,7 @@ extension VisualCategory {
 }
 
 // ===============================
-// Category Grid (2 columns)
+// Category Grid (2 columns) — uses onSelect to push
 // ===============================
 private struct CategoryGridTwoColumn: View {
     let categories: [VisualCategory]
@@ -283,69 +408,68 @@ private struct CategoryGridTwoColumn: View {
     var body: some View {
         LazyVGrid(columns: cols, spacing: 14) {
             ForEach(categories) { cat in
-                CategoryTileCard(cat: cat) { onSelect(cat) }
+                Button { onSelect(cat) } label: {
+                    CategoryTileCard(cat: cat)
+                }
+                .buttonStyle(.plain)
             }
         }
     }
 }
 
 // ===============================
-// Category tile — image-hugging (trim transparent edges)
+// Category tile — plain view (no internal nav)
 // ===============================
 private struct CategoryTileCard: View {
     let cat: VisualCategory
-    var onTap: () -> Void
 
     private let innerCorner: CGFloat = 16
     private let outerCorner: CGFloat = 20
     private let maxImageHeight: CGFloat = 145
 
     var body: some View {
-        Button(action: onTap) {
-            VStack(spacing: 8) {
-                if let raw = UIImage(named: cat.imageName) {
-                    let ui = raw.trimmedTransparentPixels(padding: 8)
-                    Image(uiImage: ui)
-                        .resizable()
-                        .scaledToFit()
-                        .frame(maxHeight: maxImageHeight)
-                        .padding(8)
-                        .background(
-                            RoundedRectangle(cornerRadius: innerCorner, style: .continuous)
-                                .fill(Color.white)
-                                .shadow(color: .black.opacity(0.08), radius: 10, x: 0, y: 6)
-                        )
-                        .clipShape(RoundedRectangle(cornerRadius: innerCorner, style: .continuous))
-                } else {
-                    RoundedRectangle(cornerRadius: innerCorner)
-                        .fill(Brand.green.opacity(0.10))
-                        .overlay(
-                            Image(systemName: "photo")
-                                .font(.system(size: 24, weight: .semibold))
-                                .foregroundStyle(Brand.green)
-                        )
-                        .frame(height: 112)
-                }
-
-                Text(cat.title)
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(.primary)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.88)
+        VStack(spacing: 8) {
+            if let raw = UIImage(named: cat.imageName) {
+                let ui = raw.trimmedTransparentPixels(padding: 8)
+                Image(uiImage: ui)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(maxHeight: maxImageHeight)
+                    .padding(8)
+                    .background(
+                        RoundedRectangle(cornerRadius: innerCorner, style: .continuous)
+                            .fill(Color.white)
+                            .shadow(color: .black.opacity(0.08), radius: 10, x: 0, y: 6)
+                    )
+                    .clipShape(RoundedRectangle(cornerRadius: innerCorner, style: .continuous))
+            } else {
+                RoundedRectangle(cornerRadius: innerCorner)
+                    .fill(Brand.green.opacity(0.10))
+                    .overlay(
+                        Image(systemName: "photo")
+                            .font(.system(size: 24, weight: .semibold))
+                            .foregroundStyle(Brand.green)
+                    )
+                    .frame(height: 112)
             }
-            .padding(10)
-            .background(
-                RoundedRectangle(cornerRadius: outerCorner, style: .continuous)
-                    .fill(.ultraThinMaterial)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: outerCorner, style: .continuous)
-                    .stroke(.white.opacity(0.32), lineWidth: 0.6)
-            )
-            .shadow(color: .black.opacity(0.06), radius: 10, x: 0, y: 5)
+
+            Text(cat.title)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.primary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.88)
         }
-        .buttonStyle(.plain)
-        .accessibilityLabel(cat.title)
+        .padding(10)
+        .background(
+            RoundedRectangle(cornerRadius: outerCorner, style: .continuous)
+                .fill(.ultraThinMaterial)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: outerCorner, style: .continuous)
+                .stroke(.white.opacity(0.32), lineWidth: 0.6)
+        )
+        .shadow(color: .black.opacity(0.06), radius: 10, x: 0, y: 5)
+        .contentShape(Rectangle())
     }
 }
 
@@ -426,7 +550,7 @@ private struct RecentRowCard: View {
 }
 
 // ===============================
-// ===== Popular marquee pieces =====
+// ===== Popular pieces =====
 // ===============================
 struct PopularItem: Identifiable, Equatable {
     let id = UUID()
@@ -435,26 +559,115 @@ struct PopularItem: Identifiable, Equatable {
 }
 
 extension PopularItem {
-    // Use your asset names exactly as in the Assets catalog
+    // Cheese → Cake label (asset stays "cheese")
     static let demo: [PopularItem] = [
         .init(title: "Drink",       imageName: "drink"),
         .init(title: "Juice",       imageName: "juice"),
         .init(title: "Pizza",       imageName: "pizza"),
-        .init(title: "Croissants",  imageName: "crosissant"), // match your asset key
+        .init(title: "Croissants",  imageName: "crosissant"),
         .init(title: "Chips",       imageName: "chips"),
-        .init(title: "Cheese",      imageName: "cheese"),
+        .init(title: "Cake",        imageName: "cheese"),
         .init(title: "Cookies",     imageName: "cookies")
     ]
 }
 
-// ====== CHIP: image + label only (no background tile) ======
+// Measure width of one sequence (for seamless loop)
+private struct WidthKey: PreferenceKey {
+    static var defaultValue: CGFloat = 1
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
+}
+private struct WidthReader: View {
+    var body: some View {
+        GeometryReader { geo in
+            Color.clear.preference(key: WidthKey.self, value: geo.size.width)
+        }
+    }
+}
+
+// ===== Timer-driven, tappable infinite marquee =====
+private struct PopularTickerLoop: View {
+    let items: [PopularItem]
+    var speed: CGFloat = 24     // points per second
+    var spacing: CGFloat = 10
+    var onTap: (PopularItem) -> Void
+
+    @State private var contentWidth: CGFloat = 1
+    @State private var offsetX: CGFloat = 0
+
+    // 60 FPS ticker
+    private let ticker = Timer.publish(every: 1.0/60.0, on: .main, in: .common).autoconnect()
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            // Title with green bar
+            HStack(spacing: 10) {
+                RoundedRectangle(cornerRadius: 2)
+                    .fill(Brand.green)
+                    .frame(width: 4, height: 18)
+                Text("Popular Categories")
+                    .font(.title3.weight(.semibold))
+                Spacer()
+            }
+            .padding(.horizontal, 16)
+
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    // copy A
+                    HStack(spacing: spacing) {
+                        ForEach(items) { it in
+                            Button { onTap(it) } label: {
+                                PopularChip(item: it)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .offset(x: offsetX)
+
+                    // copy B (placed right after A)
+                    HStack(spacing: spacing) {
+                        ForEach(items) { it in
+                            Button { onTap(it) } label: {
+                                PopularChip(item: it)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .offset(x: offsetX + max(contentWidth + spacing, 1))
+                }
+                .frame(width: geo.size.width, alignment: .leading)
+                .clipped()
+                // Measure one sequence width (behind, non-interactive)
+                .background(
+                    HStack(spacing: spacing) {
+                        ForEach(items) { PopularChip(item: $0) }
+                    }
+                    .background(WidthReader())
+                    .opacity(0.001)
+                    .allowsHitTesting(false)
+                )
+                .onPreferenceChange(WidthKey.self) { w in
+                    if w > 0 { contentWidth = w }
+                }
+                .onReceive(ticker) { _ in
+                    let loop = max(contentWidth + spacing, 1)
+                    // move left; if fully off-screen, wrap
+                    offsetX -= speed / 60.0
+                    if offsetX <= -loop { offsetX += loop }
+                }
+            }
+            .frame(height: 118)
+            .padding(.horizontal, 16)
+        }
+    }
+}
+
+// ====== CHIP: image + label (Button-friendly) ======
 private struct PopularChip: View {
     let item: PopularItem
     private let chipWidth: CGFloat = 80
 
     var body: some View {
         VStack(spacing: 4) {
-            // Safe load with fallback to placeholder
             if let ui = UIImage(named: item.imageName) {
                 Image(uiImage: ui)
                     .resizable()
@@ -478,85 +691,7 @@ private struct PopularChip: View {
                 .frame(width: chipWidth)
         }
         .frame(width: chipWidth)
-    }
-}
-
-// Measure width of one sequence (for seamless loop)
-private struct WidthKey: PreferenceKey {
-    static var defaultValue: CGFloat = 1
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
-}
-private struct WidthReader: View {
-    var body: some View {
-        GeometryReader { geo in
-            Color.clear.preference(key: WidthKey.self, value: geo.size.width)
-        }
-    }
-}
-
-// ===== Seamless Popular Ticker (no gap) =====
-private struct PopularTicker: View {
-    let items: [PopularItem]
-    var speed: CGFloat = 8     // default slow
-    var spacing: CGFloat = 8
-
-    @State private var contentWidth: CGFloat = 1
-    @State private var start = Date()
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            // Title with green bar
-            HStack(spacing: 10) {
-                RoundedRectangle(cornerRadius: 2)
-                    .fill(Brand.green)
-                    .frame(width: 4, height: 18)
-                Text("Popular Categories")
-                    .font(.title3.weight(.semibold))
-                Spacer()
-            }
-            .padding(.horizontal, 16)
-
-            GeometryReader { geo in
-                TimelineView(.animation) { context in
-                    let elapsed = context.date.timeIntervalSince(start)
-
-                    // Width of one full sequence (chips + internal spacing).
-                    // Add one spacing so gap between last→first equals chip spacing.
-                    let loop = max(contentWidth + spacing, 1)
-
-                    // Continuous left movement; wrap using modulo
-                    let dx = -CGFloat(elapsed) * speed
-                    let offset = dx.truncatingRemainder(dividingBy: loop)
-
-                    ZStack(alignment: .leading) {
-                        // Three copies so coverage is continuous
-                        let positions: [CGFloat] = [offset, offset + loop, offset + loop * 2]
-
-                        ForEach(positions, id: \.self) { pos in
-                            HStack(spacing: spacing) {
-                                ForEach(items) { PopularChip(item: $0) }
-                            }
-                            .offset(x: pos)
-                        }
-                    }
-                    // Measure one sequence width (nearly invisible overlay)
-                    .overlay(
-                        HStack(spacing: spacing) {
-                            ForEach(items) { PopularChip(item: $0) }
-                        }
-                        .background(WidthReader())
-                        .opacity(0.001)
-                    )
-                    .onPreferenceChange(WidthKey.self) { w in
-                        if w > 0 { contentWidth = w }
-                    }
-                    .frame(width: geo.size.width, alignment: .leading)
-                    .clipped()
-                }
-            }
-            .frame(height: 110) // slimmer row
-            .padding(.horizontal, 16)
-        }
+        .contentShape(Rectangle())
     }
 }
 
