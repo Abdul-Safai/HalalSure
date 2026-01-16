@@ -41,7 +41,7 @@ struct HomeView: View {
                         VStack(spacing: 6) {
                             SearchPill(query: $query)
                                 .onSubmit { handleSearch(query) }         // ⟵ Enter/Return
-                                .onChange(of: query) { newValue in         // ⟵ live suggestions
+                                .onChange(of: query) { newValue in        // ⟵ live suggestions
                                     updateSuggestions(for: newValue)
                                 }
                                 .padding(.horizontal, 16)
@@ -74,7 +74,7 @@ struct HomeView: View {
                         }
                         .padding(.top, 2)
 
-                        // Categories
+                        // ===== Categories =====
                         VStack(spacing: 8) {
                             SectionTitle("Categories")
                                 .padding(.horizontal, 16)
@@ -85,7 +85,48 @@ struct HomeView: View {
                             .padding(.horizontal, 16)
                         }
 
-                        // Recents
+                        // ===== Certified Halal Restaurants (NEW) =====
+                        VStack(spacing: 8) {
+                            SectionTitle("Certified Halal Restaurants")
+                                .padding(.horizontal, 16)
+
+                            NavigationLink {
+                                // Only the data parameter; no trailing closure
+                                RestaurantsByCityList(data: RestaurantData.sampleByCity)
+                            } label: {
+                                HStack(spacing: 12) {
+                                    Image(systemName: "fork.knife.circle.fill")
+                                        .font(.title2.weight(.semibold))
+                                        .foregroundStyle(Brand.green)
+
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text("Browse by city")
+                                            .font(.headline)
+                                            .foregroundStyle(.primary)
+                                        Text("Tap to see certified restaurants")
+                                            .font(.subheadline)
+                                            .foregroundStyle(.secondary)
+                                    }
+
+                                    Spacer()
+                                    Image(systemName: "chevron.right")
+                                        .foregroundStyle(.secondary)
+                                }
+                                .padding(14)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                                        .fill(.ultraThinMaterial)
+                                )
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                                        .stroke(.white.opacity(0.28), lineWidth: 0.8)
+                                )
+                                .shadow(color: .black.opacity(0.05), radius: 8, x: 0, y: 4)
+                                .padding(.horizontal, 16)
+                            }
+                        }
+
+                        // ===== Recents =====
                         if !recent.isEmpty {
                             HStack {
                                 SectionTitle("Recent verifications")
@@ -185,7 +226,6 @@ struct HomeView: View {
 
     private func prettyTitleForQuery(_ q: String, fallback: String) -> String {
         let lc = q.lowercased()
-        // small normalization for nicer chip text
         if ["bev","bever","beverage","beverages","drink","drinks","juice","soft drink","soda"].contains(lc) { return "Beverages" }
         if ["snack","snacks","chips","cookies","pizza","croissant","croissants","cake"].contains(lc) { return "Snacks" }
         if ["baked","bakery","bread","cake","croissant","croissants","muffin","pastry"].contains(lc) { return "Baked Goods" }
