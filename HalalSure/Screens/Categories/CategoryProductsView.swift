@@ -69,11 +69,23 @@ final class LocalProductsStore {
               ruling: .approved, checkDate: "31-Dec-2024",
               remarks: "Product is Vegan Suitable"),
 
-        // Baked
+        // Baked — added CAKE items so Baked Goods shows cake too
         .init(category: "Baked Goods", brand: "City Bakery",
               product: "Butter Croissant",
               ruling: .investigating, checkDate: "12-Mar-2025",
               remarks: "Mono/Diglycerides source under review"),
+        .init(category: "Baked Goods", brand: "SweetBake",
+              product: "Classic Chocolate Cake",
+              ruling: .approved, checkDate: "18-Nov-2024",
+              remarks: "No animal-based emulsifiers listed"),
+        .init(category: "Baked Goods", brand: "SweetBake",
+              product: "Vanilla Sponge Cake",
+              ruling: .approved, checkDate: "18-Nov-2024",
+              remarks: "Vegetarian-friendly ingredients"),
+        .init(category: "Baked Goods", brand: "HomeTreats",
+              product: "Marble Cake Loaf",
+              ruling: .unknown, checkDate: "—",
+              remarks: "Additive E471 source not confirmed"),
 
         // Snacks
         .init(category: "Snack Products", brand: "Crispo",
@@ -124,10 +136,13 @@ final class LocalProductsStore {
 struct CategoryProductsView: View {
     let categoryTitle: String
     let tag: String
+    // Optional: pre-fill the search (e.g., when user tapped “Cake”)
+    private let seedQuery: String?
 
-    init(categoryTitle: String, tag: String? = nil) {
+    init(categoryTitle: String, tag: String? = nil, seedQuery: String? = nil) {
         self.categoryTitle = categoryTitle
         self.tag = tag ?? LocalProductsStore.slug(from: categoryTitle)
+        self.seedQuery = seedQuery
     }
 
     @State private var search = ""
@@ -200,8 +215,14 @@ struct CategoryProductsView: View {
             }
             .navigationBarTitleDisplayMode(.inline)
         }
-        .task(id: tag) { rows = LocalProductsStore.shared.rows(forTag: tag) }
-        .onAppear { rows = LocalProductsStore.shared.rows(forTag: tag) }
+        .task(id: tag) {
+            rows = LocalProductsStore.shared.rows(forTag: tag)
+            if let seed = seedQuery, search.isEmpty { search = seed }
+        }
+        .onAppear {
+            rows = LocalProductsStore.shared.rows(forTag: tag)
+            if let seed = seedQuery, search.isEmpty { search = seed }
+        }
     }
 
     // MARK: - Filter

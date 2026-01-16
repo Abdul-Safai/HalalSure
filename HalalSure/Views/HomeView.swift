@@ -10,6 +10,7 @@ private enum Route: Hashable {
 // HomeView — header rail + seamless Popular marquee
 // Grid categories with navigation + scan FAB
 // Pulls "Popular" labels via local proxy (optional)
+// + Search: suggestions + Enter to navigate
 // ======================================================
 struct HomeView: View {
     @State private var path: [Route] = []
@@ -17,6 +18,10 @@ struct HomeView: View {
     @State private var query: String = ""
     @State private var recent: [VerifiedItem] = SampleData.recent
     @State private var showingScanner = false
+
+    // search UI
+    @State private var suggestions: [Suggestion] = []
+    @State private var showSuggestions = false
 
     // web-fed popular items (fallback to assets if empty)
     @State private var popularFromWeb: [PopularItem] = []
@@ -33,14 +38,35 @@ struct HomeView: View {
                         HeroHeaderRail()
 
                         // Search
-                        SearchPill(query: $query)
-                            .padding(.horizontal, 16)
+                        VStack(spacing: 6) {
+                            SearchPill(query: $query)
+                                .onSubmit { handleSearch(query) }         // ⟵ Enter/Return
+                                .onChange(of: query) { newValue in         // ⟵ live suggestions
+                                    updateSuggestions(for: newValue)
+                                }
+                                .padding(.horizontal, 16)
+
+                            if showSuggestions && !suggestions.isEmpty {
+                                SuggestionsList(
+                                    items: suggestions,
+                                    onPick: { s in
+                                        query = s.text
+                                        showSuggestions = false
+                                        path.append(.category(s.category))
+                                    },
+                                    onDismiss: { showSuggestions = false }
+                                )
+                                .padding(.horizontal, 16)
+                                .transition(.opacity.combined(with: .move(edge: .top)))
+                                .zIndex(10)
+                            }
+                        }
 
                         // ===== Popular (auto-scrolling, seamless, tappable) =====
                         let chosen = uniqueByTitle(popularFromWeb.isEmpty ? PopularItem.demo : popularFromWeb)
                         PopularTickerLoop(
                             items: chosen,
-                            speed: 8,      // points per second
+                            speed: 8,      // points per second (increase to go faster)
                             spacing: 10
                         ) { item in
                             let catTitle = destinationCategory(for: item.title)
@@ -110,6 +136,81 @@ struct HomeView: View {
                 .presentationDragIndicator(.visible)
         }
         .task { await loadPopularFromWeb() }
+    }
+
+    // MARK: - Search helpers
+    private func handleSearch(_ text: String) {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        if let cat = categoryForQuery(trimmed) {
+            path.append(.category(cat))
+        } else if let first = suggestions.first {
+            path.append(.category(first.category))
+        } else {
+            path.append(.category("All Products"))
+        }
+        showSuggestions = false
+    }
+
+    private func updateSuggestions(for text: String) {
+        let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard t.count >= 2 else {
+            suggestions.removeAll(); showSuggestions = false; return
+        }
+
+        var out: [Suggestion] = []
+
+        // 1) Try category keywords
+        if let cat = categoryForQuery(t) {
+            out.append(.init(text: prettyTitleForQuery(t, fallback: cat), category: cat))
+        }
+
+        // 2) Try matching popular items by prefix
+        let popular = (popularFromWeb.isEmpty ? PopularItem.demo : popularFromWeb)
+            .map { $0.title.lowercased() }
+        let matches = popular.filter { $0.hasPrefix(t.lowercased()) }
+        for m in matches {
+            let cat = destinationCategory(for: m)
+            out.append(.init(text: m.capitalized, category: cat))
+        }
+
+        // 3) De-dupe by category title
+        var seen = Set<String>()
+        suggestions = out.filter {
+            if seen.contains($0.category) { return false }
+            seen.insert($0.category); return true
+        }
+        showSuggestions = !suggestions.isEmpty
+    }
+
+    private func prettyTitleForQuery(_ q: String, fallback: String) -> String {
+        let lc = q.lowercased()
+        // small normalization for nicer chip text
+        if ["bev","bever","beverage","beverages","drink","drinks","juice","soft drink","soda"].contains(lc) { return "Beverages" }
+        if ["snack","snacks","chips","cookies","pizza","croissant","croissants","cake"].contains(lc) { return "Snacks" }
+        if ["baked","bakery","bread","cake","croissant","croissants","muffin","pastry"].contains(lc) { return "Baked Goods" }
+        if ["dairy","cheese","milk","yogurt","butter"].contains(lc) { return "Dairy Products" }
+        if ["frozen","ice cream","frozen food"].contains(lc) { return "Frozen Foods" }
+        if ["condiment","ketchup","mustard","mayo","sauce","spice","spices"].contains(lc) { return "Condiments" }
+        return fallback
+    }
+
+    private func categoryForQuery(_ q: String) -> String? {
+        let t = q.lowercased()
+        let rules: [(terms: [String], category: String)] = [
+            (["drink","drinks","beverage","beverages","juice","soft drink","soda"], "Beverages"),
+            (["chip","chips","cookie","cookies","snack","snacks","pizza","croissant","croissants","cake"], "Snack Products"),
+            (["baked","bakery","bread","cake","croissant","croissants","muffin","pastry"], "Baked Goods"),
+            (["dairy","cheese","milk","yogurt","butter"], "Dairy Products"),
+            (["frozen","ice cream","frozen food"], "Frozen Foods"),
+            (["condiment","ketchup","mustard","mayo","sauce","spice","spices"], "Condiments"),
+            (["beans","lentils","chocolate","other"], "Other Products"),
+            (["all","everything"], "All Products")
+        ]
+        for rule in rules {
+            if rule.terms.contains(where: { t.contains($0) }) { return rule.category }
+        }
+        return nil
     }
 
     // MARK: - Remote Popular (via local PHP proxy)
@@ -214,6 +315,66 @@ private struct HalalProxyResponse: Decodable {
     let status: Int
     let url: String
     let html: String
+}
+
+// ===============================
+// Suggestions popover
+// ===============================
+private struct SuggestionsList: View {
+    let items: [Suggestion]
+    var onPick: (Suggestion) -> Void
+    var onDismiss: () -> Void
+
+    var body: some View {
+        VStack(spacing: 0) {
+            ForEach(items) { s in
+                Button {
+                    onPick(s)
+                } label: {
+                    HStack {
+                        Image(systemName: "magnifyingglass")
+                            .foregroundStyle(.secondary)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(s.text)
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(.primary)
+                                .lineLimit(1)
+                            Text("in \(s.category)")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                    }
+                    .padding(.vertical, 10)
+                    .padding(.horizontal, 12)
+                }
+                .buttonStyle(.plain)
+
+                if s.id != items.last?.id {
+                    Divider().opacity(0.35)
+                }
+            }
+
+            Button(role: .cancel) { onDismiss() } label: {
+                Text("Dismiss").font(.footnote).padding(.vertical, 8)
+            }
+        }
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(.ultraThinMaterial)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(.white.opacity(0.35), lineWidth: 0.7)
+        )
+        .shadow(color: .black.opacity(0.08), radius: 10, x: 0, y: 6)
+    }
+}
+
+private struct Suggestion: Identifiable {
+    let id = UUID()
+    let text: String
+    let category: String
 }
 
 // ===============================
@@ -332,7 +493,7 @@ private struct HeroHeaderRail: View {
 }
 
 // ===============================
-// Search pill
+// Search pill (unchanged)
 // ===============================
 private struct SearchPill: View {
     @Binding var query: String
@@ -650,6 +811,7 @@ private struct PopularTickerLoop: View {
                 }
                 .onReceive(ticker) { _ in
                     let loop = max(contentWidth + spacing, 1)
+                    guard loop > 1 else { return }
                     // move left; if fully off-screen, wrap
                     offsetX -= speed / 60.0
                     if offsetX <= -loop { offsetX += loop }
