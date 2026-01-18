@@ -41,7 +41,7 @@ struct HomeView: View {
                         VStack(spacing: 6) {
                             SearchPill(query: $query)
                                 .onSubmit { handleSearch(query) }         // ⟵ Enter/Return
-                                .onChange(of: query) { newValue in        // ⟵ live suggestions
+                                .onChange(of: query) { newValue in         // ⟵ live suggestions
                                     updateSuggestions(for: newValue)
                                 }
                                 .padding(.horizontal, 16)
@@ -74,7 +74,7 @@ struct HomeView: View {
                         }
                         .padding(.top, 2)
 
-                        // ===== Categories =====
+                        // Categories
                         VStack(spacing: 8) {
                             SectionTitle("Categories")
                                 .padding(.horizontal, 16)
@@ -85,48 +85,7 @@ struct HomeView: View {
                             .padding(.horizontal, 16)
                         }
 
-                        // ===== Certified Halal Restaurants (NEW) =====
-                        VStack(spacing: 8) {
-                            SectionTitle("Certified Halal Restaurants")
-                                .padding(.horizontal, 16)
-
-                            NavigationLink {
-                                // Only the data parameter; no trailing closure
-                                RestaurantsByCityList(data: RestaurantData.sampleByCity)
-                            } label: {
-                                HStack(spacing: 12) {
-                                    Image(systemName: "fork.knife.circle.fill")
-                                        .font(.title2.weight(.semibold))
-                                        .foregroundStyle(Brand.green)
-
-                                    VStack(alignment: .leading, spacing: 2) {
-                                        Text("Browse by city")
-                                            .font(.headline)
-                                            .foregroundStyle(.primary)
-                                        Text("Tap to see certified restaurants")
-                                            .font(.subheadline)
-                                            .foregroundStyle(.secondary)
-                                    }
-
-                                    Spacer()
-                                    Image(systemName: "chevron.right")
-                                        .foregroundStyle(.secondary)
-                                }
-                                .padding(14)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 18, style: .continuous)
-                                        .fill(.ultraThinMaterial)
-                                )
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 18, style: .continuous)
-                                        .stroke(.white.opacity(0.28), lineWidth: 0.8)
-                                )
-                                .shadow(color: .black.opacity(0.05), radius: 8, x: 0, y: 4)
-                                .padding(.horizontal, 16)
-                            }
-                        }
-
-                        // ===== Recents =====
+                        // Recents
                         if !recent.isEmpty {
                             HStack {
                                 SectionTitle("Recent verifications")
@@ -224,31 +183,44 @@ struct HomeView: View {
         showSuggestions = !suggestions.isEmpty
     }
 
+    // ⬇️ UPDATED to keep croissant/cake under Baked Goods
     private func prettyTitleForQuery(_ q: String, fallback: String) -> String {
         let lc = q.lowercased()
-        if ["bev","bever","beverage","beverages","drink","drinks","juice","soft drink","soda"].contains(lc) { return "Beverages" }
-        if ["snack","snacks","chips","cookies","pizza","croissant","croissants","cake"].contains(lc) { return "Snacks" }
-        if ["baked","bakery","bread","cake","croissant","croissants","muffin","pastry"].contains(lc) { return "Baked Goods" }
+        // Beverages
+        if ["bev","bever","beverage","beverages","drink","drinks","juice","soft drink","soda"].contains(lc) {
+            return "Beverages"
+        }
+        // Baked (croissant/cake belong here)
+        if ["baked","bakery","bread","cake","croissant","croissants","muffin","pastry"].contains(lc) {
+            return "Baked Goods"
+        }
+        // Snacks (no croissant here)
+        if ["snack","snacks","chips","cookies","pizza"].contains(lc) {
+            return "Snack Products"
+        }
         if ["dairy","cheese","milk","yogurt","butter"].contains(lc) { return "Dairy Products" }
         if ["frozen","ice cream","frozen food"].contains(lc) { return "Frozen Foods" }
         if ["condiment","ketchup","mustard","mayo","sauce","spice","spices"].contains(lc) { return "Condiments" }
         return fallback
     }
 
+    // ⬇️ UPDATED rule order so croissant/cake map to Baked Goods
     private func categoryForQuery(_ q: String) -> String? {
         let t = q.lowercased()
         let rules: [(terms: [String], category: String)] = [
             (["drink","drinks","beverage","beverages","juice","soft drink","soda"], "Beverages"),
-            (["chip","chips","cookie","cookies","snack","snacks","pizza","croissant","croissants","cake"], "Snack Products"),
+            // Baked first so croissants/cake resolve here
             (["baked","bakery","bread","cake","croissant","croissants","muffin","pastry"], "Baked Goods"),
+            // Snacks without croissant
+            (["chip","chips","cookie","cookies","snack","snacks","pizza"], "Snack Products"),
             (["dairy","cheese","milk","yogurt","butter"], "Dairy Products"),
             (["frozen","ice cream","frozen food"], "Frozen Foods"),
             (["condiment","ketchup","mustard","mayo","sauce","spice","spices"], "Condiments"),
             (["beans","lentils","chocolate","other"], "Other Products"),
             (["all","everything"], "All Products")
         ]
-        for rule in rules {
-            if rule.terms.contains(where: { t.contains($0) }) { return rule.category }
+        for rule in rules where rule.terms.contains(where: { t.contains($0) }) {
+            return rule.category
         }
         return nil
     }
@@ -341,11 +313,13 @@ struct HomeView: View {
         return out
     }
 
+    // ⬇️ UPDATED: tapping Popular chips routes croissants/cake to Baked Goods
     private func destinationCategory(for popularTitle: String) -> String {
         let t = popularTitle.lowercased()
         if ["drink","drinks","juice"].contains(t) { return "Beverages" }
-        if ["chips","cookies","pizza","croissants"].contains(t) { return "Snack Products" }
-        if ["cake"].contains(t) { return "Baked Goods" }
+        // Croissants/cake are baked
+        if ["croissant","croissants","cake","bread","bakery","pastry"].contains(t) { return "Baked Goods" }
+        if ["chips","cookies","pizza"].contains(t) { return "Snack Products" }
         return "All Products"
     }
 }
