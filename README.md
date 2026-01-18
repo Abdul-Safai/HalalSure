@@ -23,23 +23,19 @@ Trusted halal verification app.
 - [ ] XD-matching colors/typography
 - [ ] App Icon & Launch Screen
 
-### Running the HMA proxy (required for Popular data)
+## HMA Popular Proxy (Optional)
 
-This app fetches "Popular Categories" via a small PHP proxy.
+The app can fetch “Popular Categories” labels via a local PHP proxy (to avoid CORS).
 
-Option A — XAMPP (matches current code):
-1) Copy `Server/proxy.php` to:
-   /Applications/XAMPP/xamppfiles/htdocs/halalsure-api/proxy.php
-2) Start Apache in XAMPP.
-3) Done. The app calls:
-   http://localhost/halalsure-api/proxy.php?url=...
+**Quick setup (macOS + XAMPP):**
+1. Open **XAMPP Control** → start **Apache**.
+2. Copy the proxy into htdocs:
+   - `Server/deploy-proxy.sh` (provided in this repo) will copy `Server/proxy.php` to:
+     `/Applications/XAMPP/xamppfiles/htdocs/halalsure-api/proxy.php`
+3. Run:
+   ```bash
+   bash Server/deploy-proxy.sh
 
-Option B — PHP built-in server:
-1) In Terminal:
-   cd /path/to/HalalSure/Server
-   php -S localhost:8081
-2) Change the URL in `HomeView.loadPopularFromWeb()` to:
-   http://localhost:8081/proxy.php?url=...
 
 
 ## Changelog
